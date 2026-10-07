@@ -1,12 +1,10 @@
-# chpath [![CI](https://github.com/MichelBoucey/chpath/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MichelBoucey/chpath/actions/workflows/ci.yml)
-
-A Unix-style CLI tool to carefully manage the modification of the Unix environment variable `PATH` (`$PATH`).
+# chpath, CLI tool to manage the modification of the Unix environment variable `PATH` [![CI](https://github.com/MichelBoucey/chpath/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MichelBoucey/chpath/actions/workflows/ci.yml)
 
 ## 1. Goal
 
-The `PATH` variable holds a list of directories to search for executable programs, in order. When a command is typed without a full path, the system checks those directories and uses the first matching executable it finds.
+For the record, the `PATH` variable holds a list of directories to search for executable programs, in order. When a command is typed without a full path, the system checks those directories and uses the first matching executable it finds.
 
-Over time `PATH` tends to degrade: the same directory is added twice, and directories that no longer exist (uninstalled tools, moved SDKs) keep slowing down every command lookup. The goal of `chpath` is to manage the modification of `PATH` carefully:
+Over time `PATH` tends to degrade: the same directory is added twice or more, and directories that no longer exist (uninstalled tools, moved SDKs) keep slowing down every command lookup. The goal of `chpath` is to manage the modification of `PATH` carefully:
 
 - add and remove directory paths,
 - check for directory paths that no longer exist in the file system,
@@ -15,15 +13,27 @@ Over time `PATH` tends to degrade: the same directory is added twice, and direct
 
 `chpath` rewrites the shell configuration file where `PATH` is set instead of patching the environment of the current process only, so the changes persist across new shell sessions.
 
+**N.B.**: for now, `chpath` is just implemented for **Bash**.
+
+## Security 
+
+This CLI tool is created to modify the shell configuration files like `.bashrc` that should include only trivial exports and aliases, not API tokens or other secrets. At least the permissions on user's shell configuration files should be `600`.
+
 ## 2. Installation
 
-Build from the source with the Rust toolchain:
+### 2.1. From crates.io
+
+```
+cargo install chpath
+```
+
+### 2.2. From source
 
 ```console
 $ cargo build --release
 ```
 
-The binary is then available at `target/release/chpath`; copy it to a directory of your `PATH`, for example:
+The binary is then available at `target/release/chpath`; copy it to a directory of your `PATH` (_of course, isn't it?_), for example:
 
 ```console
 $ cp target/release/chpath ~/.local/bin/
@@ -31,8 +41,8 @@ $ cp target/release/chpath ~/.local/bin/
 
 Requirements:
 
-- a Rust toolchain to build the project;
-- `git` at build time to embed the current short hash in the version (without it, the version reports `unknown`).
+- a Rust toolchain to build the project
+- `git` at build time to embed the current short hash in the version (without it, the version reports `unknown`)
 
 ## 3. Usage
 
@@ -42,9 +52,8 @@ chpath [OPTIONS]
 
 Without flags or arguments, `chpath` outputs the help as the `--help` do.
 
-For now, `chpath` is just implemented for **Bash**: the used shell is read from the environment variable `SHELL` and the changes are written in its configuration file, `$HOME/.bashrc`. Any other shell ends with an explicit error.
 
-The four operations `--add`, `--remove`, `--check` and `--cleanup` are mutually exclusive.
+the used shell is read from the environment variable `SHELL` and the changes are written in its configuration file, `$HOME/.bashrc`. Any other shell ends with an explicit error.
 
 ## 4. Flags
 
@@ -158,6 +167,11 @@ Add the directory of the Go binaries and output the re-written configuration fil
 ```console
 $ chpath --add $HOME/.go/bin
 the path '/home/user/.go/bin' has been added to PATH
+```
+
+Which gives the PATH's value:
+
+```
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:$PATH:$HOME/.local/bin:/usr/lib/jvm/default/bin:$HOME/.old/tools:/home/user/.go/bin
 ```
 
@@ -181,7 +195,7 @@ $HOME/.old/tools
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:$PATH:$HOME/.local/bin:/usr/lib/jvm/default/bin
 ```
 
-## License
+## 6. License
 
-`chpath` is released under 3-Clause BSD License.
+The CLI tool `chpath` is released under 3-Clause BSD License.
 
