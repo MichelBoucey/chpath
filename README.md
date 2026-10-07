@@ -1,4 +1,4 @@
-# chpath, CLI tool to manage the modification of the Unix environment variable `PATH` [![CI](https://github.com/MichelBoucey/chpath/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MichelBoucey/chpath/actions/workflows/ci.yml)
+# chpath, a CLI tool to manage the modification of the Unix environment variable `PATH` [![CI](https://github.com/MichelBoucey/chpath/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MichelBoucey/chpath/actions/workflows/ci.yml)
 
 ## 1. Goal
 
@@ -17,9 +17,14 @@ Over time `PATH` tends to degrade: the same directory is added twice or more, an
 
 ## Security 
 
-This CLI tool is created to modify the shell configuration files like `.bashrc` that should include only trivial exports and aliases, not API tokens or other secrets. At least the permissions on user's shell configuration files should be `600`.
+`chpath` is created to modify the shell configuration files like `.bashrc` that should include only trivial exports and aliases, not API tokens or other secrets. At least the permissions on user's shell configuration files should be `600`.
 
 ## 2. Installation
+
+Requirements:
+
+- a Rust toolchain to build the project
+- `git` at build time to embed the current short hash in the version (without it, the version reports `unknown`)
 
 ### 2.1. From crates.io
 
@@ -39,11 +44,6 @@ The binary is then available at `target/release/chpath`; copy it to a directory 
 $ cp target/release/chpath ~/.local/bin/
 ```
 
-Requirements:
-
-- a Rust toolchain to build the project
-- `git` at build time to embed the current short hash in the version (without it, the version reports `unknown`)
-
 ## 3. Usage
 
 ```text
@@ -51,7 +51,6 @@ chpath [OPTIONS]
 ```
 
 Without flags or arguments, `chpath` outputs the help as the `--help` do.
-
 
 the used shell is read from the environment variable `SHELL` and the changes are written in its configuration file, `$HOME/.bashrc`. Any other shell ends with an explicit error.
 
@@ -66,6 +65,8 @@ $ chpath --add $HOME/.go/bin
 ```
 
 The path is appended to the value of `PATH`; a confirmation message is emitted to tell that the new path has been added to `PATH`. Adding a path already present in `PATH` leaves `PATH` unchanged (`--add` is idempotent).
+
+**N.B.**: if you want to add `$HOME` literally to your `PATH`, quote the path to add like this, `chpath --add '$HOME/.go/bin'`.
 
 ### 4.2. `--remove`, `-r`
 
