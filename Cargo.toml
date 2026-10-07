@@ -2,6 +2,14 @@
 name = "chpath"
 version = "0.1.0"
 edition = "2024"
+authors = ["Michel Boucey <michel.boucey@gmail.com>"]
+license = "BSD-3-Clause"
+categories = ["command-line-utilities"]
+description = "a CLI tool to manage the modification of the Unix environment variable PATH"
+homepage = "https://github.com/MichelBoucey/chpath"
+repository = "https://github.com/MichelBoucey/chpath"
+readme = "README.md"
+keywords = ["cli"]
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
