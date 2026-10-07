@@ -47,16 +47,29 @@ $ cp target/release/chpath ~/.local/bin/
 ## 4. Usage
 
 ```text
-chpath [OPTIONS]
+[user@box ~] $ chpath
+Manage the Unix environment variable PATH ($PATH)
+
+Usage: chpath [OPTIONS]
+
+Options:
+  -a, --add <ADD>        Add the given path to PATH
+  -r, --remove <REMOVE>  Remove the given path from PATH
+  -c, --check            Output the paths of PATH whose directory no longer exists
+  -u, --cleanup          Remove the paths of PATH whose directory no longer exists
+  -l, --list             Output the current paths of PATH, one per line
+  -w, --write            Rewrite the shell configuration file instead of printing it to stdout
+  -v, --version          Output the version of chpath with the current git short hash
+  -h, --help             Print help
 ```
 
 Without flags or arguments, `chpath` outputs the help as the `--help` do.
 
 the used shell is read from the environment variable `SHELL` and the changes are written in its configuration file, `$HOME/.bashrc`. Any other shell ends with an explicit error.
 
-## 5. Flags
+### 4.1. Flags in details
 
-### 5.1. `--add`, `-a`
+#### 4.1.1. `--add`, `-a`
 
 Add the given path in argument to `PATH`.
 
@@ -68,7 +81,7 @@ The path is appended to the value of `PATH`; a confirmation message is emitted t
 
 *N.B.*: if you want to add `$HOME` literally to your `PATH`, quote the path to add like this, `chpath --add '$HOME/.go/bin'`.
 
-### 5.2. `--remove`, `-r`
+#### 4.1.2. `--remove`, `-r`
 
 Remove the given path in argument from `PATH`.
 
@@ -78,7 +91,7 @@ $ chpath --remove /usr/lib/jvm/default/bin
 
 A confirmation message is emitted when the path is removed. If the given path doesn't exist in `PATH`, `chpath` exits in error with an error message.
 
-### 5.3. `--check`, `-c`
+#### 4.1.3. `--check`, `-c`
 
 Check if some paths already added to `PATH` no more exist in the file system.
 
@@ -88,7 +101,7 @@ $ chpath --check
 
 `chpath` outputs the dead directory paths present in the `PATH` value, one per output line. Nothing is modified and the exit code stays `0`, even when dead paths are found.
 
-### 5.4. `--cleanup`, `-u`
+#### 4.1.4. `--cleanup`, `-u`
 
 Remove the paths from `PATH` that have no directory paths corresponding in the file system.
 
@@ -98,7 +111,7 @@ $ chpath --cleanup
 
 The dead directory paths removed from the `PATH` value are output, one per output line, and the re-written configuration file follows the default output behavior (see `--write`).
 
-### 5.5. `--list`, `-l`
+#### 4.1.5. `--list`, `-l`
 
 Output the current paths of `PATH`, one per line.
 
@@ -108,7 +121,7 @@ $ chpath --list
 
 The paths are output verbatim, as stored in the configuration file. The pseudo-entry `$PATH`, which concatenates the old value of `PATH`, and the empty entries are skipped.
 
-### 5.6. `--write`, `-w`
+#### 4.1.6. `--write`, `-w`
 
 In combination with `--add`, `--remove` and `--cleanup`, rewrite the shell configuration file on disk.
 
@@ -128,7 +141,7 @@ $ chpath --add $HOME/.go/bin --write
 
 The flag `--write` cannot be combined with `--check` nor `--list`.
 
-### 5.7. `--version`, `-v`
+#### 4.1.7. `--version`, `-v`
 
 Output the version of `chpath` with the current git short hash:
 
@@ -137,11 +150,11 @@ $ chpath --version
 chpath 0.1.0 (33c0e12)
 ```
 
-### 5.8. `--help`, `-h`
+#### 4.1.8. `--help`, `-h`
 
 Output the help of `chpath`.
 
-## 6. Examples
+## 5. Examples
 
 Given the following line in `$HOME/.bashrc`:
 
@@ -196,7 +209,7 @@ $HOME/.old/tools
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:$PATH:$HOME/.local/bin:/usr/lib/jvm/default/bin
 ```
 
-## 7. License
+## 6. License
 
 The CLI tool `chpath` is released under 3-Clause BSD License.
 
