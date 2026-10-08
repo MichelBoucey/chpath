@@ -4,7 +4,7 @@
 
 For the record, the `PATH` variable holds a list of directories to search for executable programs, in order. When a command is typed without a full path, the system checks those directories and uses the first matching executable it finds.
 
-Over time `PATH` tends to degrade: the same directory is added twice or more, and directories that no longer exist (uninstalled tools, moved SDKs) keep slowing down every command lookup. The goal of `chpath` is to manage the modification of `PATH` carefully:
+Over time `PATH` tends to degrade: the same directory is added twice, and directories that no longer exist (uninstalled tools, moved SDKs) keep slowing down every command lookup. The goal of `chpath` (named following `chmod` or `chown`) is to manage the modification of `PATH` carefully:
 
 - add and remove directory paths,
 - check for directory paths that no longer exist in the file system,
@@ -211,5 +211,5 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:$PATH:$HOME/.local/bin:/usr/
 
 ## 6. License
 
-The CLI tool `chpath` is released under 3-Clause BSD License.
+The CLI tool `chpath` is released under `3-Clause BSD License`.
 
