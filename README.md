@@ -239,7 +239,18 @@ $ chpath --check
 PATH is OK
 ```
 
-## 6. License
+## 6. AI agent skill
+
+`chpath` ships an AI agent skill in the [`chpath-skill`](chpath-skill) directory, which teaches a coding agent how to manage `PATH` safely on your behalf.
+
+The skill is made of two files:
+
+- [`chpath-skill/SKILL.md`](chpath-skill/SKILL.md) — the instructions loaded by the agent: the requirements and limits, the reference of the commands, the safe preview, `--write` and `--backup` workflow, the path normalization rules and usage examples,
+- [`chpath-skill/LICENSE`](chpath-skill/LICENSE) — its own `3-Clause BSD License`.
+
+Once loaded, the agent can drive `chpath` to list, check, add, remove and clean up the paths of `PATH`, and it always previews the re-written shell configuration file before persisting it with `--write`.
+
+## 7. License
 
 The CLI tool `chpath` is released under `3-Clause BSD License`.
 
