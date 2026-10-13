@@ -52,6 +52,10 @@ pub fn add(entries: &[String], path: &str, home: &str) -> (Vec<String>, bool) {
         return (entries.to_vec(), false);
     }
 
+    if entries.iter().any(|entry| entry == "$PATH") && in_live_path(&target) {
+        return (entries.to_vec(), false);
+    }
+
     let mut updated = entries.to_vec();
     updated.push(path.to_string());
     (updated, true)
@@ -219,6 +223,50 @@ fn expand(entry: &str, home: &str) -> String {
     }
 
     entry.to_string()
+}
+
+fn normalize_segment(segment: &str) -> String {
+    let mut normalized = String::with_capacity(segment.len());
+    let mut previous_slash = false;
+
+    for char in segment.chars() {
+        if char == '/' {
+            if !previous_slash {
+                normalized.push(char);
+            }
+
+            previous_slash = true;
+        } else {
+            normalized.push(char);
+            previous_slash = false;
+        }
+    }
+
+    if normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+
+    normalized
+}
+
+fn in_live_path(target_key: &str) -> bool {
+    if let Ok(live) = std::env::var("PATH") {
+        for segment in live.split(':') {
+            if segment.is_empty() {
+                continue;
+            }
+
+            if has_unresolved_var(segment) {
+                continue;
+            }
+
+            if normalize_segment(segment) == target_key {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 /// Tell if the entry still holds an environment variable reference which
