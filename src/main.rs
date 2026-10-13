@@ -48,7 +48,7 @@ fn run() -> Result<(), String> {
     let home = shell::home_dir()?.to_string_lossy().into_owned();
 
     if cli.list {
-        return list(&entries);
+        return list(&entries, &home);
     }
 
     if cli.check {
@@ -99,10 +99,12 @@ fn check_flags(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 
-/// Output the current paths of PATH, one per line, skipping the pseudo-entry
-/// `$PATH`.
-fn list(entries: &[String]) -> Result<(), String> {
-    for entry in pathlist::visible_paths(entries) {
+/// Output all the current paths of PATH, one per line, expanding the
+/// pseudo-entry `$PATH` with the live value of PATH and dropping the duplicates.
+fn list(entries: &[String], home: &str) -> Result<(), String> {
+    let live_path = env::var("PATH").unwrap_or_default();
+
+    for entry in pathlist::visible_paths(entries, &live_path, home) {
         println!("{entry}");
     }
 
