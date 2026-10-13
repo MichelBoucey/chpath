@@ -7,8 +7,8 @@ For the record, the `PATH` variable holds a list of directories to search for ex
 Over time `PATH` tends to degrade: the same directory is added twice, and directories that no longer exist (uninstalled tools, moved SDKs) keep slowing down every command lookup. The goal of `chpath` (named following `chmod` or `chown`) is to manage the modification of `PATH` carefully:
 
 - add and remove directory paths,
-- check for directory paths that no longer exist in the file system,
-- cleanup those dead directory paths,
+- check for directory paths that no longer exist in the file system and for duplicated directory paths,
+- cleanup those dead directory paths and those duplicated directory paths,
 - list the current directory paths.
 
 `chpath` rewrites the shell configuration file where `PATH` is set instead of patching the environment of the current process only, so the changes persist across new shell sessions.
@@ -17,7 +17,7 @@ Over time `PATH` tends to degrade: the same directory is added twice, and direct
 
 ## 2. Security 
 
-`chpath` is created to modify the shell configuration files like `.bashrc` that should include only trivial exports and aliases, not API tokens or other secrets. At least the permissions on user's shell configuration files should be `600`.
+`chpath` is created to modify the shell configuration files like `.bashrc` that should include only trivial exports and aliases, not API tokens or other secrets. At least the permissions on user's shell configuration files should be `600`. When `--write` rewrites the file, `chpath` preserves its permissions (a brand new file is created with the mode `600`) and replaces it atomically, so an interrupted write can never leave a truncated configuration file.
 
 ## 3. Installation
 
@@ -55,10 +55,11 @@ Usage: chpath [OPTIONS]
 Options:
   -a, --add <ADD>        Add the given path to PATH
   -r, --remove <REMOVE>  Remove the given path from PATH
-  -c, --check            Output the paths of PATH whose directory no longer exists
-  -u, --cleanup          Remove the paths of PATH whose directory no longer exists
+  -c, --check            Output the dead and duplicated paths of PATH
+  -u, --cleanup          Remove the dead paths and the duplicate paths from PATH
   -l, --list             Output the current paths of PATH, one per line
   -w, --write            Rewrite the shell configuration file instead of printing it to stdout
+  -b, --backup           Write a backup of the shell configuration file before rewriting it
   -v, --version          Output the version of chpath with the current git short hash
   -h, --help             Print help
 ```
@@ -77,7 +78,7 @@ Add the given path in argument to `PATH`.
 $ chpath --add $HOME/.go/bin
 ```
 
-The path is appended to the value of `PATH`; a confirmation message is emitted to tell that the new path has been added to `PATH`. Adding a path already present in `PATH` leaves `PATH` unchanged (`--add` is idempotent).
+The path is appended to the value of `PATH`; a confirmation message is emitted to tell that the new path has been added to `PATH`. Adding a path already present in `PATH` leaves `PATH` unchanged (`--add` is idempotent). The paths are compared in their normalized form, so `/usr/bin/` is the same path as `/usr/bin` and `~/.go/bin` is the same path as `$HOME/.go/bin`.
 
 *N.B.*: if you want to add `$HOME` literally to your `PATH`, quote the path to add like this, `chpath --add '$HOME/.go/bin'`.
 
@@ -89,27 +90,31 @@ Remove the given path in argument from `PATH`.
 $ chpath --remove /usr/lib/jvm/default/bin
 ```
 
-A confirmation message is emitted when the path is removed. If the given path doesn't exist in `PATH`, `chpath` exits in error with an error message.
+A confirmation message is emitted when the path is removed. If the given path doesn't exist in `PATH`, `chpath` exits in error with an error message. As for `--add`, the paths are compared in their normalized form, so `/usr/bin/` matches `/usr/bin`.
 
 #### 4.1.3. `--check`, `-c`
 
-Check if some paths already added to `PATH` no more exist in the file system.
+Check for the dead directory paths and the duplicated paths present in `PATH`.
 
 ```console
 $ chpath --check
+the directory path '$HOME/.old/tools' no longer exists
+the path '/usr/bin' is duplicated in PATH
 ```
 
-`chpath` outputs the dead directory paths present in the `PATH` value, one per output line. Nothing is modified and the exit code stays `0`, even when dead paths are found.
+A dead directory path is a path whose directory no more exists in the file system. A duplicated path is a path present more than once in `PATH` (the paths are compared in their normalized form). The issues are output one per output line, in the order of the `PATH` value, and `--cleanup` outputs **exactly the same lines**. When no issue is found, `chpath` outputs `PATH is OK`. Nothing is modified and the exit code stays `0`, even when issues are found.
 
 #### 4.1.4. `--cleanup`, `-u`
 
-Remove the paths from `PATH` that have no directory paths corresponding in the file system.
+Remove the dead and the duplicated paths from `PATH`.
 
 ```console
 $ chpath --cleanup
+the directory path '$HOME/.old/tools' no longer exists
+the path '/usr/bin' is duplicated in PATH
 ```
 
-The dead directory paths removed from the `PATH` value are output, one per output line, and the re-written configuration file follows the default output behavior (see `--write`).
+The issues are output exactly as `--check` does (`PATH is OK` when there is none), then the re-written configuration file follows the default output behavior (see `--write`).
 
 #### 4.1.5. `--list`, `-l`
 
@@ -141,16 +146,29 @@ $ chpath --add $HOME/.go/bin --write
 
 The flag `--write` cannot be combined with `--check` nor `--list`.
 
-#### 4.1.7. `--version`, `-v`
+The rewrite is atomic: the new content is written to a temporary file in the same directory and renamed over the configuration file, so an interrupted write never leaves a truncated file. The permissions of the file are preserved and a brand new file is created with the mode `600`.
+
+#### 4.1.7. `--backup`, `-b`
+
+In combination with `--write`, write a backup of the shell configuration file to `<configuration file>.bak`, for example `$HOME/.bashrc.bak`, before rewriting it.
+
+```console
+$ chpath --add $HOME/.go/bin --write --backup
+```
+
+The flag `--backup` cannot be used without `--write`.
+
+#### 4.1.8. `--version`, `-v`
 
 Output the version of `chpath` with the current git short hash:
 
 ```console
 $ chpath --version
-chpath 0.1.0 (33c0e12)
+chpath 1.0.0 (f244051) released under 3-Clause BSD License
+Copyright © 2026 Michel Boucey (michel.boucey@gmail.com)
 ```
 
-#### 4.1.8. `--help`, `-h`
+#### 4.1.9. `--help`, `-h`
 
 Output the help of `chpath`.
 
@@ -159,10 +177,10 @@ Output the help of `chpath`.
 Given the following line in `$HOME/.bashrc`:
 
 ```sh
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:$PATH:$HOME/.local/bin:/usr/lib/jvm/default/bin:$HOME/.old/tools
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:$PATH:$HOME/.local/bin:/usr/lib/jvm/default/bin:$HOME/.old/tools:/usr/bin
 ```
 
-with `$HOME/.old/tools` being a directory which no longer exists.
+with `$HOME/.old/tools` being a directory which no longer exists and `/usr/bin` being duplicated.
 
 List the current paths of `PATH`:
 
@@ -174,6 +192,7 @@ $ chpath --list
 $HOME/.local/bin
 /usr/lib/jvm/default/bin
 $HOME/.old/tools
+/usr/bin
 ```
 
 Add the directory of the Go binaries and output the re-written configuration file:
@@ -186,27 +205,36 @@ the path '/home/user/.go/bin' has been added to PATH
 Which gives the PATH's value:
 
 ```
-export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:$PATH:$HOME/.local/bin:/usr/lib/jvm/default/bin:$HOME/.old/tools:/home/user/.go/bin
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:$PATH:$HOME/.local/bin:/usr/lib/jvm/default/bin:$HOME/.old/tools:/usr/bin:/home/user/.go/bin
 ```
 
-Find the dead directory paths:
+Find the dead and the duplicated paths:
 
 ```console
 $ chpath --check
-$HOME/.old/tools
+the directory path '$HOME/.old/tools' no longer exists
+the path '/usr/bin' is duplicated in PATH
 ```
 
-Remove the dead directory paths and rewrite the configuration file:
+Remove the dead and the duplicated paths and rewrite the configuration file:
 
 ```console
 $ chpath --cleanup --write
-$HOME/.old/tools
+the directory path '$HOME/.old/tools' no longer exists
+the path '/usr/bin' is duplicated in PATH
 ```
 
 `$HOME/.bashrc` now reads:
 
 ```sh
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:$PATH:$HOME/.local/bin:/usr/lib/jvm/default/bin
+```
+
+A new check then reports that `PATH` is clean:
+
+```console
+$ chpath --check
+PATH is OK
 ```
 
 ## 6. License
