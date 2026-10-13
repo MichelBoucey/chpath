@@ -25,7 +25,7 @@ pub struct Cli {
     #[arg(short = 'u', long)]
     pub cleanup: bool,
 
-    /// Output the current paths of PATH, one per line.
+    /// Output all the current paths of PATH, one per line.
     #[arg(short = 'l', long)]
     pub list: bool,
 

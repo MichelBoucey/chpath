@@ -169,13 +169,26 @@ pub fn issues(entries: &[String], home: &str) -> Vec<Issue> {
     cleanup(entries, home).issues()
 }
 
-/// Output the PATH entries which are real paths, skipping the pseudo-entry
-/// `$PATH` and the empty entries.
-pub fn visible_paths(entries: &[String]) -> Vec<&String> {
-    entries
+/// Output the PATH entries which are real paths, expanding the pseudo-entry
+/// `$PATH` with the live value of the environment variable PATH, in place.
+///
+/// The empty entries are skipped and the duplicates are dropped keeping the
+/// first occurrence, compared in their normalized form (see `key`), exactly as
+/// `--cleanup` does.
+pub fn visible_paths(entries: &[String], live_path: &str, home: &str) -> Vec<String> {
+    let expanded = entries
         .iter()
-        .filter(|entry| !entry.is_empty() && entry.as_str() != "$PATH")
-        .collect()
+        .flat_map(|entry| match entry.as_str() {
+            "$PATH" => parse(live_path),
+            "" => Vec::new(),
+            other => vec![other.to_string()],
+        })
+        .filter(|entry| !entry.is_empty())
+        .collect::<Vec<String>>();
+
+    let (kept, _) = dedup(&expanded, home);
+
+    kept
 }
 
 /// The normalized form of a PATH entry, used to compare entries for equality.
@@ -455,12 +468,48 @@ mod tests {
     }
 
     #[test]
-    fn visible_paths_skips_the_path_item_and_empty_entries() {
-        let entries = parse("/usr/bin:$PATH::/opt/bin");
+    fn visible_paths_expands_the_path_item_in_place() {
+        let entries = parse("/usr/bin:$PATH:/opt/bin");
 
-        let visible = visible_paths(&entries);
+        let visible = visible_paths(&entries, "/sbin:/bin", "/home/user");
 
-        assert_eq!(visible, vec!["/usr/bin", "/opt/bin"]);
+        assert_eq!(visible, vec!["/usr/bin", "/sbin", "/bin", "/opt/bin"]);
+    }
+
+    #[test]
+    fn visible_paths_skips_the_empty_entries_and_live_segments() {
+        let entries = parse("/usr/bin::$PATH::/opt/bin");
+
+        let visible = visible_paths(&entries, "/sbin::/bin", "/home/user");
+
+        assert_eq!(visible, vec!["/usr/bin", "/sbin", "/bin", "/opt/bin"]);
+    }
+
+    #[test]
+    fn visible_paths_drops_the_normalized_duplicates() {
+        let entries = parse("$HOME/.local/bin:$PATH:/usr/bin:/opt/bin");
+
+        let visible = visible_paths(&entries, "/home/user/.local/bin/:/usr/bin", "/home/user");
+
+        assert_eq!(visible, vec!["$HOME/.local/bin", "/usr/bin", "/opt/bin"]);
+    }
+
+    #[test]
+    fn visible_paths_keeps_the_entries_verbatim() {
+        let entries = parse("$HOME/.go/bin:~/tools");
+
+        let visible = visible_paths(&entries, "", "/home/user");
+
+        assert_eq!(visible, vec!["$HOME/.go/bin", "~/tools"]);
+    }
+
+    #[test]
+    fn visible_paths_is_empty_without_a_live_path() {
+        let entries = parse("$PATH");
+
+        let visible = visible_paths(&entries, "", "/home/user");
+
+        assert!(visible.is_empty());
     }
 
     #[test]

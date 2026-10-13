@@ -57,7 +57,7 @@ Options:
   -r, --remove <REMOVE>  Remove the given path from PATH
   -c, --check            Output the dead and duplicated paths of PATH
   -u, --cleanup          Remove the dead paths and the duplicate paths from PATH
-  -l, --list             Output the current paths of PATH, one per line
+  -l, --list             Output all the current paths of PATH, one per line
   -w, --write            Rewrite the shell configuration file instead of printing it to stdout
   -b, --backup           Write a backup of the shell configuration file before rewriting it
   -v, --version          Output the version of chpath with the current git short hash
@@ -118,13 +118,13 @@ The issues are output exactly as `--check` does (`PATH is OK` when there is none
 
 #### 4.1.5. `--list`, `-l`
 
-Output the current paths of `PATH`, one per line.
+Output all the current paths of `PATH`, one per line.
 
 ```console
 $ chpath --list
 ```
 
-The paths are output verbatim, as stored in the configuration file. The pseudo-entry `$PATH`, which concatenates the old value of `PATH`, and the empty entries are skipped.
+The explicit paths are output verbatim, as stored in the configuration file. The pseudo-entry `$PATH`, which stands for the old value of `PATH`, is expanded in place with the live value of the environment variable `PATH`, so every path is listed. The empty entries are skipped and the duplicated paths are dropped keeping the first occurrence; as everywhere else in `chpath`, the paths are compared in their normalized form, so `$HOME/.local/bin` and `/home/user/.local/bin` are the same path.
 
 #### 4.1.6. `--write`, `-w`
 
@@ -182,18 +182,20 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:$PATH:$HOME/.local/bin:/usr/
 
 with `$HOME/.old/tools` being a directory which no longer exists and `/usr/bin` being duplicated.
 
-List the current paths of `PATH`:
+List all the current paths of `PATH` (here with the live `PATH` being `/usr/local/sbin:/usr/local/bin:/usr/bin:/bin`):
 
 ```console
 $ chpath --list
 /usr/local/sbin
 /usr/local/bin
 /usr/bin
+/bin
 $HOME/.local/bin
 /usr/lib/jvm/default/bin
 $HOME/.old/tools
-/usr/bin
 ```
+
+The pseudo-entry `$PATH` is expanded in place with the live value of `PATH`, and the duplicated `/usr/bin` is dropped.
 
 Add the directory of the Go binaries and output the re-written configuration file:
 
