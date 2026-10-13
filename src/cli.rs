@@ -17,21 +17,25 @@ pub struct Cli {
     #[arg(short = 'r', long)]
     pub remove: Option<String>,
 
-    /// Output the paths of PATH whose directory no longer exists.
+    /// Output the dead and duplicated paths of PATH.
     #[arg(short = 'c', long)]
     pub check: bool,
 
-    /// Remove the paths of PATH whose directory no longer exists.
+    /// Remove the dead paths and the duplicate paths from PATH.
     #[arg(short = 'u', long)]
     pub cleanup: bool,
 
-    /// Output the current paths of PATH, one per line.
+    /// Output all the current paths of PATH, one per line.
     #[arg(short = 'l', long)]
     pub list: bool,
 
     /// Rewrite the shell configuration file instead of printing it to stdout.
     #[arg(short = 'w', long)]
     pub write: bool,
+
+    /// Write a backup of the shell configuration file before rewriting it.
+    #[arg(short = 'b', long)]
+    pub backup: bool,
 
     /// Output the version of chpath with the current git short hash.
     #[arg(short = 'v', long)]

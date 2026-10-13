@@ -32,7 +32,10 @@ fn run() -> Result<(), String> {
 
     // The flag --version outputs the version and exits as the --help do.
     if cli.version {
-        println!("chpath {} released under 3-Clause BSD License", env!("CHPATH_VERSION"));
+        println!(
+            "chpath {} released under 3-Clause BSD License",
+            env!("CHPATH_VERSION")
+        );
         println!("Copyright © 2026 Michel Boucey (michel.boucey@gmail.com)");
         return Ok(());
     }
@@ -42,27 +45,27 @@ fn run() -> Result<(), String> {
     let config_path = shell::config_file()?;
     let config = ConfigFile::read(&config_path)?;
     let entries = pathlist::parse(config.value());
+    let home = shell::home_dir()?.to_string_lossy().into_owned();
 
     if cli.list {
-        return list(&entries);
+        return list(&entries, &home);
     }
 
     if cli.check {
-        return check(&entries);
+        return check(&entries, &home);
     }
 
-    let home = shell::home_dir()?.to_string_lossy().into_owned();
     let (updated, messages) = apply(&cli, &entries, &home)?;
-    let lines = config.rewrite(&updated);
+    let contents = config.rewrite(&updated);
 
     for message in &messages {
         eprintln!("{message}");
     }
 
     if cli.write {
-        config_file::write(&config_path, &lines)
+        config_file::write(&config_path, &contents, cli.backup)
     } else {
-        config_file::print(&lines)
+        config_file::print(&contents)
     }
 }
 
@@ -85,6 +88,10 @@ fn check_flags(cli: &Cli) -> Result<(), String> {
         );
     }
 
+    if cli.backup && !cli.write {
+        return Err("the flag --backup must be combined with the flag --write".to_string());
+    }
+
     if !operation {
         return Err("no operation given, run 'chpath --help'".to_string());
     }
@@ -92,25 +99,38 @@ fn check_flags(cli: &Cli) -> Result<(), String> {
     Ok(())
 }
 
-/// Output the current paths of PATH, one per line, skipping the pseudo-entry
-/// `$PATH`.
-fn list(entries: &[String]) -> Result<(), String> {
-    for entry in pathlist::visible_paths(entries) {
+/// Output all the current paths of PATH, one per line, expanding the
+/// pseudo-entry `$PATH` with the live value of PATH and dropping the duplicates.
+fn list(entries: &[String], home: &str) -> Result<(), String> {
+    let live_path = env::var("PATH").unwrap_or_default();
+
+    for entry in pathlist::visible_paths(entries, &live_path, home) {
         println!("{entry}");
     }
 
     Ok(())
 }
 
-/// Output the dead directory paths present in the PATH value, one per line.
-fn check(entries: &[String]) -> Result<(), String> {
-    let home = shell::home_dir()?.to_string_lossy().into_owned();
-
-    for dead in pathlist::dead_paths(entries, &home) {
-        println!("{dead}");
-    }
+/// Output the issues detected in PATH, exactly the same lines as `--cleanup`.
+fn check(entries: &[String], home: &str) -> Result<(), String> {
+    print_issues(&pathlist::issues(entries, home));
 
     Ok(())
+}
+
+/// Output the issues detected in PATH, one per line, or `PATH is OK` when
+/// nothing is found. Both `--check` and `--cleanup` use this function so that
+/// they output exactly the same lines.
+fn print_issues(issues: &[pathlist::Issue]) {
+    if issues.is_empty() {
+        println!("PATH is OK");
+
+        return;
+    }
+
+    for issue in issues {
+        println!("{}", issue.describe());
+    }
 }
 
 /// Rewrite the PATH value with the given operation.
@@ -119,7 +139,7 @@ fn check(entries: &[String]) -> Result<(), String> {
 /// to stderr.
 fn apply(cli: &Cli, entries: &[String], home: &str) -> Result<(Vec<String>, Vec<String>), String> {
     if let Some(path) = &cli.add {
-        let (updated, added) = pathlist::add(entries, path);
+        let (updated, added) = pathlist::add(entries, path, home);
         let message = if added {
             format!("the path '{path}' has been added to PATH")
         } else {
@@ -130,7 +150,7 @@ fn apply(cli: &Cli, entries: &[String], home: &str) -> Result<(Vec<String>, Vec<
     }
 
     if let Some(path) = &cli.remove {
-        let updated = pathlist::remove(entries, path)?;
+        let updated = pathlist::remove(entries, path, home)?;
 
         return Ok((
             updated,
@@ -139,14 +159,10 @@ fn apply(cli: &Cli, entries: &[String], home: &str) -> Result<(Vec<String>, Vec<
     }
 
     if cli.cleanup {
-        let (updated, removed) = pathlist::cleanup(entries, home);
-        let messages = if removed.is_empty() {
-            vec!["no dead directory path has been found in PATH".to_string()]
-        } else {
-            removed.iter().map(|path| path.to_string()).collect()
-        };
+        let cleanup = pathlist::cleanup(entries, home);
+        print_issues(&cleanup.issues());
 
-        return Ok((updated, messages));
+        return Ok((cleanup.kept, Vec::new()));
     }
 
     Err("no operation given, run 'chpath --help'".to_string())
