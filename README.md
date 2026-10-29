@@ -58,6 +58,7 @@ Options:
   -c, --check            Output the dead and duplicated paths of PATH
   -u, --cleanup          Remove the dead paths and the duplicate paths from PATH
   -l, --list             Output all the current paths of PATH, one per line
+  -f, --force            Add a path whose directory does not exist
   -w, --write            Rewrite the shell configuration file instead of printing it to stdout
   -b, --backup           Write a backup of the shell configuration file before rewriting it
   -v, --version          Output the version of chpath with the current git short hash
@@ -80,6 +81,21 @@ $ chpath --add $HOME/.go/bin
 
 The path is appended to the value of `PATH`; a confirmation message is emitted to tell that the new path has been added to `PATH`. Adding a path already present in `PATH` leaves `PATH` unchanged (`--add` is idempotent). The paths are compared in their normalized form, so `/usr/bin/` is the same path as `/usr/bin` and `~/.go/bin` is the same path as `$HOME/.go/bin`.
 
+The path is validated before anything is written:
+
+- it must be absolute, or start with `$HOME`, `${HOME}` or `~`,
+- the directory must exist, unless `--force` is given,
+- it must not hold a character which cannot be stored safely in the shell configuration file: a space, a quote, a backslash, `#`, `;`, a control character like a newline, and so on. Only the variable references `$NAME` and `${NAME}`, which the shell expands when it reads the file, are accepted.
+
+Anything else ends with an explicit error and leaves the file untouched.
+
+```console
+$ chpath --add '/opt/my tools/bin'
+chpath: cannot add the path '/opt/my tools/bin': the character ' ' cannot be written safely in the shell configuration file, add it manually
+$ chpath --add /opt/not/installed/yet/bin
+chpath: the directory '/opt/not/installed/yet/bin' does not exist, use --force to add it anyway
+```
+
 *N.B.*: if you want to add `$HOME` literally to your `PATH`, quote the path to add like this, `chpath --add '$HOME/.go/bin'`.
 
 #### 4.1.2. `--remove`, `-r`
@@ -90,7 +106,7 @@ Remove the given path in argument from `PATH`.
 $ chpath --remove /usr/lib/jvm/default/bin
 ```
 
-A confirmation message is emitted when the path is removed. If the given path doesn't exist in `PATH`, `chpath` exits in error with an error message. As for `--add`, the paths are compared in their normalized form, so `/usr/bin/` matches `/usr/bin`.
+A confirmation message is emitted when the path is removed. If the given path doesn't exist in `PATH`, `chpath` exits in error with an error message. As for `--add`, the paths are compared in their normalized form, so `/usr/bin/` matches `/usr/bin`. A path which is only inherited from the live `PATH` through the pseudo-entry `$PATH` is reported as such: it does not come from the configuration file, so it cannot be removed from there.
 
 #### 4.1.3. `--check`, `-c`
 
@@ -102,7 +118,7 @@ the directory path '$HOME/.old/tools' no longer exists
 the path '/usr/bin' is duplicated in PATH
 ```
 
-A dead directory path is a path whose directory no more exists in the file system. A duplicated path is a path present more than once in `PATH` (the paths are compared in their normalized form). The issues are output one per output line, in the order of the `PATH` value, and `--cleanup` outputs **exactly the same lines**. When no issue is found, `chpath` outputs `PATH is OK`. Nothing is modified and the exit code stays `0`, even when issues are found.
+A dead directory path is a path whose directory no more exists in the file system. A duplicated path is a path present more than once in `PATH` (the paths are compared in their normalized form). The issues are output one per output line, the dead paths first and then the duplicated paths, and `--cleanup` outputs **exactly the same lines**. When no issue is found, `chpath` outputs `PATH is OK`. Nothing is modified and the exit code stays `0`, even when issues are found.
 
 #### 4.1.4. `--cleanup`, `-u`
 
@@ -126,7 +142,17 @@ $ chpath --list
 
 The explicit paths are output verbatim, as stored in the configuration file. The pseudo-entry `$PATH`, which stands for the old value of `PATH`, is expanded in place with the live value of the environment variable `PATH`, so every path is listed. The empty entries are skipped and the duplicated paths are dropped keeping the first occurrence; as everywhere else in `chpath`, the paths are compared in their normalized form, so `$HOME/.local/bin` and `/home/user/.local/bin` are the same path.
 
-#### 4.1.6. `--write`, `-w`
+#### 4.1.6. `--force`, `-f`
+
+In combination with `--add`, add a path whose directory does not exist yet, for example a directory created later by an installer.
+
+```console
+$ chpath --add /opt/toolchain/bin --force
+```
+
+The path still has to be absolute and safe to write; `--force` only skips the existence check.
+
+#### 4.1.7. `--write`, `-w`
 
 In combination with `--add`, `--remove` and `--cleanup`, rewrite the shell configuration file on disk.
 
@@ -148,7 +174,7 @@ The flag `--write` cannot be combined with `--check` nor `--list`.
 
 The rewrite is atomic: the new content is written to a temporary file in the same directory and renamed over the configuration file, so an interrupted write never leaves a truncated file. The permissions of the file are preserved and a brand new file is created with the mode `600`.
 
-#### 4.1.7. `--backup`, `-b`
+#### 4.1.8. `--backup`, `-b`
 
 In combination with `--write`, write a backup of the shell configuration file to `<configuration file>.bak`, for example `$HOME/.bashrc.bak`, before rewriting it.
 
@@ -158,7 +184,7 @@ $ chpath --add $HOME/.go/bin --write --backup
 
 The flag `--backup` cannot be used without `--write`.
 
-#### 4.1.8. `--version`, `-v`
+#### 4.1.9. `--version`, `-v`
 
 Output the version of `chpath` with the current git short hash:
 
@@ -168,9 +194,25 @@ chpath 1.0.0 (f244051) released under 3-Clause BSD License
 Copyright © 2026 Michel Boucey (michel.boucey@gmail.com)
 ```
 
-#### 4.1.9. `--help`, `-h`
+#### 4.1.10. `--help`, `-h`
 
 Output the help of `chpath`.
+
+### 4.2. Configuration file syntax
+
+`chpath` recognizes the line which sets `PATH` in the shell configuration file in these forms, quoted or not, with or without a trailing inline comment:
+
+```sh
+PATH=/usr/bin:$PATH
+export PATH=/usr/bin:$PATH
+declare -x PATH="/usr/bin:$PATH"  # or typeset -x
+```
+
+The line may be indented, for example inside an `if` block.
+
+The file must set `PATH` exactly once. `chpath` ends with an explicit error when no line sets `PATH`, when several lines set it (the line numbers are listed, since the last one wins in the shell and editing any other would be misleading), when the line continues on the next line with a trailing `\`, and when the line appends to `PATH` with `PATH+=`.
+
+The other lines of the file are left untouched, including their line endings.
 
 ## 5. Examples
 

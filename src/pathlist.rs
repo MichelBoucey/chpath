@@ -1,6 +1,33 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+/// The characters which are stored verbatim in the shell configuration file.
+const SAFE_CHARS: &str = "/._-+@,=%";
+
+/// Why a path cannot be removed from PATH.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RemoveError {
+    /// The path is not present in PATH at all.
+    Missing,
+    /// The path only comes from the live PATH, through the pseudo-entry
+    /// `$PATH`, and thus cannot be removed from the configuration file.
+    Inherited,
+}
+
+impl RemoveError {
+    /// The sentence describing the failure, output by `--remove`.
+    pub fn describe(&self, path: &str, config: &Path) -> String {
+        match self {
+            RemoveError::Missing => format!("the path '{path}' is not present in PATH"),
+            RemoveError::Inherited => format!(
+                "the path '{path}' is inherited from the live PATH through the $PATH pseudo-entry \
+                 and cannot be removed from the file {}, which it does not set",
+                config.display()
+            ),
+        }
+    }
+}
+
 /// An issue detected in the PATH value.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Issue {
@@ -64,12 +91,19 @@ pub fn add(entries: &[String], path: &str, home: &str) -> (Vec<String>, bool) {
 /// Remove `path` from the given PATH entries.
 ///
 /// The entries are compared in their normalized form (see `key`). Fails when
-/// the path is not present in PATH.
-pub fn remove(entries: &[String], path: &str, home: &str) -> Result<Vec<String>, String> {
+/// the path is not present in PATH, telling apart a path which is absent and a
+/// path which is only inherited from the live PATH through `$PATH`.
+pub fn remove(entries: &[String], path: &str, home: &str) -> Result<Vec<String>, RemoveError> {
     let target = key(path, home);
 
     if !entries.iter().any(|entry| key(entry, home) == target) {
-        return Err(format!("the path '{path}' is not present in PATH"));
+        let inherited = entries.iter().any(|entry| entry == "$PATH") && in_live_path(&target);
+
+        return Err(if inherited {
+            RemoveError::Inherited
+        } else {
+            RemoveError::Missing
+        });
     }
 
     Ok(entries
@@ -114,6 +148,131 @@ pub fn is_dead(entry: &str, home: &str) -> bool {
     }
 
     !Path::new(&expanded).is_dir()
+}
+
+/// Tell if a PATH entry is an absolute path.
+///
+/// The prefixes `$HOME`, `${HOME}` and `~` are expanded first, so `~/.go/bin`
+/// is absolute.
+pub fn is_absolute(entry: &str, home: &str) -> bool {
+    expand(entry, home).starts_with('/')
+}
+
+/// Check that a path can be added to PATH and stored safely in the shell
+/// configuration file.
+///
+/// The path must be absolute and must not hold any character which could break
+/// the shell configuration file when written in it (a space, a quote, a
+/// newline...). The directory must also exist unless `force` is set, or unless
+/// the path holds an environment variable reference which chpath cannot
+/// resolve.
+pub fn validate_add(path: &str, home: &str, force: bool) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("the path to add is empty".to_string());
+    }
+
+    if !is_absolute(path, home) {
+        return Err(format!(
+            "the path '{path}' is not absolute; every PATH entry must be an absolute path or \
+             start with $HOME, ${{HOME}} or ~"
+        ));
+    }
+
+    if let Some(char) = unsafe_char(path) {
+        return Err(format!(
+            "cannot add the path '{path}': the character {char:?} cannot be written safely in \
+             the shell configuration file, add it manually"
+        ));
+    }
+
+    let expanded = expand(path, home);
+
+    if !force && !has_unresolved_var(&expanded) && !Path::new(&expanded).is_dir() {
+        return Err(format!(
+            "the directory '{path}' does not exist, use --force to add it anyway"
+        ));
+    }
+
+    Ok(())
+}
+
+/// The first character of a PATH entry which forbids storing it in the shell
+/// configuration file, if any.
+///
+/// The characters are stored verbatim in the line which sets PATH, so a space
+/// or a quote would break the line and a newline would inject a whole line in
+/// the file. Variable references `$NAME` and `${NAME}`, which the shell
+/// expands at startup, and a leading `~` are accepted.
+pub fn unsafe_char(entry: &str) -> Option<char> {
+    let mut rest = entry;
+
+    if let Some(after) = rest.strip_prefix('~')
+        && (after.is_empty() || after.starts_with('/'))
+    {
+        rest = after;
+    }
+
+    let mut index = 0;
+
+    while let Some(char) = rest[index..].chars().next() {
+        if char.is_control() {
+            return Some(char);
+        }
+
+        if char == '$' {
+            match variable_reference_len(&rest[index..]) {
+                Some(len) => {
+                    index += len;
+
+                    continue;
+                }
+                None => return Some(char),
+            }
+        }
+
+        if char.is_alphanumeric() || SAFE_CHARS.contains(char) {
+            index += char.len_utf8();
+
+            continue;
+        }
+
+        return Some(char);
+    }
+
+    None
+}
+
+/// The length in bytes of the variable reference `$NAME` or `${NAME}` which
+/// starts the given text, when it is well formed.
+fn variable_reference_len(text: &str) -> Option<usize> {
+    let after = text.strip_prefix('$')?;
+
+    if let Some(braced) = after.strip_prefix('{') {
+        let name = braced.split_once('}')?.0;
+        let len = variable_name_len(name)?;
+
+        return (len == name.len()).then(|| 2 + name.len() + 1);
+    }
+
+    variable_name_len(after).map(|len| 1 + len)
+}
+
+/// The length in bytes of the variable name at the start of the given text.
+fn variable_name_len(text: &str) -> Option<usize> {
+    let mut len = 0;
+
+    for (index, char) in text.char_indices() {
+        let ident = char.is_ascii_alphanumeric() || char == '_';
+        let start = char.is_ascii_alphabetic() || char == '_';
+
+        if ident && (index != 0 || start) {
+            len = index + char.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    (len > 0).then_some(len)
 }
 
 /// Drop the duplicate PATH entries, keeping the first occurrence.
@@ -365,7 +524,148 @@ mod tests {
     fn remove_fails_on_an_absent_path() {
         let entries = parse("/usr/bin");
 
-        assert!(remove(&entries, "/opt/bin", "/home/user").is_err());
+        assert_eq!(
+            remove(&entries, "/definitely/not/in/path", "/home/user"),
+            Err(RemoveError::Missing)
+        );
+    }
+
+    #[test]
+    fn remove_describes_the_inherited_case() {
+        let message = RemoveError::Inherited.describe("/bin", Path::new("/home/user/.bashrc"));
+
+        assert!(
+            message.contains("inherited"),
+            "unexpected message: {message}"
+        );
+        assert!(message.contains("/home/user/.bashrc"));
+    }
+
+    #[test]
+    fn validate_add_accepts_an_existing_directory() {
+        assert!(validate_add("/usr/bin", "/home/user", false).is_ok());
+    }
+
+    #[test]
+    fn validate_add_checks_the_directory_after_expanding_home() {
+        let error = validate_add("~/.go/bin", "/definitely/not/a/home", false)
+            .expect_err("path is refused");
+
+        assert!(
+            error.contains("does not exist"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn validate_add_skips_the_existence_check_on_a_variable() {
+        assert!(validate_add("/opt/$XDG_BIN_HOME/bin", "/home/user", false).is_ok());
+    }
+
+    #[test]
+    fn validate_add_rejects_an_empty_path() {
+        assert_eq!(
+            validate_add("", "/home/user", false),
+            Err("the path to add is empty".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_add_rejects_a_relative_path() {
+        let error = validate_add("bin/tools", "/home/user", false).expect_err("path is refused");
+
+        assert!(
+            error.contains("is not absolute"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn validate_add_rejects_a_missing_directory() {
+        let error = validate_add("/definitely/not/a/directory", "/home/user", false)
+            .expect_err("path is refused");
+
+        assert!(
+            error.contains("does not exist"),
+            "unexpected error: {error}"
+        );
+        assert!(validate_add("/definitely/not/a/directory", "/home/user", true).is_ok());
+    }
+
+    #[test]
+    fn validate_add_rejects_an_unsafe_path() {
+        for path in [
+            "/opt/my tools",
+            "/opt/it's/bin",
+            "/opt/back\\slash",
+            "/opt/tag#1",
+            "/tmp/x\nexport EVIL=1",
+            "/opt/$",
+        ] {
+            let error = match validate_add(path, "/home/user", false) {
+                Ok(()) => panic!("the path {path:?} is accepted"),
+                Err(error) => error,
+            };
+
+            assert!(
+                error.contains("cannot be written safely"),
+                "unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn unsafe_char_accepts_safe_entries() {
+        for entry in [
+            "/usr/bin",
+            "/usr//bin/",
+            "$HOME/.go/bin",
+            "${HOME}/.go/bin",
+            "~/.go/bin",
+            "/opt/$XDG_BIN_HOME/bin",
+            "/opt/${XDG_BIN_HOME}/bin",
+            "/opt/café/bin",
+            "/opt/bin_1.2+d",
+        ] {
+            assert_eq!(unsafe_char(entry), None, "the entry {entry:?} is refused");
+        }
+    }
+
+    #[test]
+    fn unsafe_char_refuses_unsafe_entries() {
+        for (entry, char) in [
+            ("/opt/my tools", ' '),
+            ("/opt/it's/bin", '\''),
+            ("/opt/\"quoted\"/bin", '"'),
+            ("/opt/back\\slash", '\\'),
+            ("/opt/tag#1", '#'),
+            ("/opt/a:/b", ':'),
+            ("/opt/bin;rm -rf", ';'),
+            ("/tmp/x\nexport EVIL=1", '\n'),
+            ("/tmp/x\tevil", '\t'),
+            ("/opt/$", '$'),
+            ("/opt/${HOME", '$'),
+            ("/opt/$9/bin", '$'),
+            ("/opt/~/bin", '~'),
+            ("~user/bin", '~'),
+        ] {
+            assert_eq!(
+                unsafe_char(entry),
+                Some(char),
+                "the entry {entry:?} is accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn is_absolute_expands_the_home_prefixes() {
+        assert!(is_absolute("/usr/bin", "/home/user"));
+        assert!(is_absolute("$HOME/.go/bin", "/home/user"));
+        assert!(is_absolute("${HOME}/.go/bin", "/home/user"));
+        assert!(is_absolute("~/.go/bin", "/home/user"));
+        assert!(!is_absolute("bin", "/home/user"));
+        assert!(!is_absolute("./bin", "/home/user"));
+        assert!(!is_absolute("$XDG_BIN_HOME/bin", "/home/user"));
     }
 
     #[test]

@@ -21,3 +21,6 @@ jobs:
 
       - name: Test
         run: cargo test --all-targets
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
