@@ -29,6 +29,10 @@ pub struct Cli {
     #[arg(short = 'l', long)]
     pub list: bool,
 
+    /// Add a path whose directory does not exist.
+    #[arg(short = 'f', long)]
+    pub force: bool,
+
     /// Rewrite the shell configuration file instead of printing it to stdout.
     #[arg(short = 'w', long)]
     pub write: bool,

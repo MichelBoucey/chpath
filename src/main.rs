@@ -4,6 +4,7 @@ mod pathlist;
 mod shell;
 
 use std::env;
+use std::path::Path;
 use std::process::ExitCode;
 
 use clap::{CommandFactory, Parser};
@@ -55,7 +56,7 @@ fn run() -> Result<(), String> {
         return check(&entries, &home);
     }
 
-    let (updated, messages) = apply(&cli, &entries, &home)?;
+    let (updated, messages) = apply(&cli, &entries, &home, &config_path)?;
     let contents = config.rewrite(&updated);
 
     for message in &messages {
@@ -86,6 +87,10 @@ fn check_flags(cli: &Cli) -> Result<(), String> {
         return Err(
             "the flag --write must be combined with --add, --remove or --cleanup".to_string(),
         );
+    }
+
+    if cli.force && cli.add.is_none() {
+        return Err("the flag --force must be combined with the flag --add".to_string());
     }
 
     if cli.backup && !cli.write {
@@ -137,9 +142,19 @@ fn print_issues(issues: &[pathlist::Issue]) {
 ///
 /// Returns the updated entries and the confirmation messages emitted by chpath
 /// to stderr.
-fn apply(cli: &Cli, entries: &[String], home: &str) -> Result<(Vec<String>, Vec<String>), String> {
+fn apply(
+    cli: &Cli,
+    entries: &[String],
+    home: &str,
+    config: &Path,
+) -> Result<(Vec<String>, Vec<String>), String> {
     if let Some(path) = &cli.add {
         let (updated, added) = pathlist::add(entries, path, home);
+
+        if added {
+            pathlist::validate_add(path, home, cli.force)?;
+        }
+
         let message = if added {
             format!("the path '{path}' has been added to PATH")
         } else {
@@ -150,7 +165,8 @@ fn apply(cli: &Cli, entries: &[String], home: &str) -> Result<(Vec<String>, Vec<
     }
 
     if let Some(path) = &cli.remove {
-        let updated = pathlist::remove(entries, path, home)?;
+        let updated =
+            pathlist::remove(entries, path, home).map_err(|err| err.describe(path, config))?;
 
         return Ok((
             updated,

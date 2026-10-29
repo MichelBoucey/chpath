@@ -9,6 +9,7 @@ use crate::pathlist;
 
 /// The line which sets the environment variable PATH in the shell
 /// configuration file.
+#[derive(Debug)]
 struct PathLine {
     prefix: String,
     quote: Option<char>,
@@ -35,30 +36,75 @@ pub struct ConfigFile {
     lines: Vec<String>,
     path_line: usize,
     line: PathLine,
+    line_ending: &'static str,
     final_newline: bool,
 }
 
 impl ConfigFile {
-    /// Read the shell configuration file and find the line which sets PATH.
+    /// Read the shell configuration file and find the single line which sets
+    /// PATH.
+    ///
+    /// Fails when no line sets PATH, when several lines set it, and when the
+    /// line setting PATH uses a syntax which chpath does not support (`PATH+=`
+    /// or a continuation).
     pub fn read(path: &Path) -> Result<Self, String> {
         let contents = fs::read_to_string(path)
             .map_err(|err| format!("cannot read the file {}: {err}", path.display()))?;
+        let line_ending = if contents.contains("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
         let final_newline = contents.ends_with('\n');
         let lines = contents
             .lines()
             .map(str::to_string)
             .collect::<Vec<String>>();
 
-        let found = lines
-            .iter()
-            .enumerate()
-            .find_map(|(index, line)| parse_path_line(line).map(|parsed| (index, parsed)));
+        let mut found = Vec::new();
 
-        match found {
+        for (index, line) in lines.iter().enumerate() {
+            match parse_path_line(line) {
+                Parsed::Match(line) => found.push((index, line)),
+                Parsed::Continuation => {
+                    return Err(format!(
+                        "the line {} setting the environment variable PATH in the file {} \
+                         continues on the next line, which chpath does not support",
+                        index + 1,
+                        path.display()
+                    ));
+                }
+                Parsed::Append => {
+                    return Err(format!(
+                        "the line {} appends to the environment variable PATH in the file {} \
+                         with 'PATH+=', which chpath does not support",
+                        index + 1,
+                        path.display()
+                    ));
+                }
+                Parsed::Ignore => {}
+            }
+        }
+
+        if found.len() > 1 {
+            let numbers = found
+                .iter()
+                .map(|(index, _)| (index + 1).to_string())
+                .collect::<Vec<String>>()
+                .join(", ");
+
+            return Err(format!(
+                "several lines set the environment variable PATH in the file {}: lines {numbers}",
+                path.display()
+            ));
+        }
+
+        match found.pop() {
             Some((path_line, line)) => Ok(Self {
                 lines,
                 path_line,
                 line,
+                line_ending,
                 final_newline,
             }),
             None => Err(format!(
@@ -80,10 +126,10 @@ impl ConfigFile {
         let mut lines = self.lines.clone();
         lines[self.path_line] = self.line.rewrite(entries);
 
-        let mut contents = lines.join("\n");
+        let mut contents = lines.join(self.line_ending);
 
         if self.final_newline {
-            contents.push('\n');
+            contents.push_str(self.line_ending);
         }
 
         contents
@@ -218,19 +264,49 @@ fn rename(temporary: &Path, target: &Path) -> Result<(), String> {
         .map_err(|err| format!("cannot write the file {}: {err}", target.display()))
 }
 
-/// Find the prefix `PATH=` or `export PATH=` at the start of the line and parse
-/// the rest of the line.
-fn parse_path_line(line: &str) -> Option<PathLine> {
-    let rest = match line.strip_prefix("export") {
-        Some(rest) => rest.trim_start(),
-        None => line,
+/// What a line of the shell configuration file holds about PATH.
+#[derive(Debug)]
+enum Parsed {
+    /// The line sets PATH and chpath can rewrite it.
+    Match(PathLine),
+    /// The line sets PATH but continues on the next line with `\`.
+    Continuation,
+    /// The line appends to PATH with `PATH+=`.
+    Append,
+    /// The line has nothing to do with PATH.
+    Ignore,
+}
+
+/// Find the prefix `PATH=`, `export PATH=`, `declare -x PATH=` or
+/// `typeset -x PATH=` at the start of the line and parse the rest of the line.
+///
+/// The indentation of the line is kept in the prefix, as well as the prefix
+/// itself and the spaces which follow the keyword. The spaces after the `=`
+/// are ignored.
+fn parse_path_line(line: &str) -> Parsed {
+    let trimmed = line.trim_start();
+    let rest = ["export ", "declare -x ", "typeset -x "]
+        .iter()
+        .find_map(|prefix| trimmed.strip_prefix(prefix))
+        .map_or(trimmed, str::trim_start);
+
+    let Some(value) = rest.strip_prefix("PATH=") else {
+        if rest.starts_with("PATH+=") {
+            return Parsed::Append;
+        }
+
+        return Parsed::Ignore;
     };
 
-    let rest = rest.strip_prefix("PATH=")?;
-    let prefix = &line[..line.len() - rest.len()];
-    let (quote, value, trailing) = split_value(rest);
+    let value = value.trim_start();
+    let prefix = line[..line.len() - value.len()].trim_end();
+    let (quote, value, trailing) = split_value(value);
 
-    Some(PathLine {
+    if quote.is_none() && value.trim_end().ends_with('\\') {
+        return Parsed::Continuation;
+    }
+
+    Parsed::Match(PathLine {
         prefix: prefix.to_string(),
         quote,
         value,
@@ -296,9 +372,16 @@ mod tests {
         directory
     }
 
+    fn parse(line: &str) -> PathLine {
+        match parse_path_line(line) {
+            Parsed::Match(line) => line,
+            other => panic!("the line is not parsed: {other:?}"),
+        }
+    }
+
     #[test]
     fn parse_path_line_handles_a_plain_assignment() {
-        let line = parse_path_line("PATH=/usr/bin:/usr/lib").expect("line is parsed");
+        let line = parse("PATH=/usr/bin:/usr/lib");
 
         assert_eq!(line.prefix, "PATH=");
         assert_eq!(line.quote, None);
@@ -308,15 +391,41 @@ mod tests {
 
     #[test]
     fn parse_path_line_handles_export() {
-        let line = parse_path_line("export PATH=$PATH:/usr/bin").expect("line is parsed");
+        let line = parse("export PATH=$PATH:/usr/bin");
 
         assert_eq!(line.prefix, "export PATH=");
         assert_eq!(line.value, "$PATH:/usr/bin");
     }
 
     #[test]
+    fn parse_path_line_handles_declare_and_typeset() {
+        assert_eq!(
+            parse("declare -x PATH=\"/usr/bin\"").prefix,
+            "declare -x PATH="
+        );
+        assert_eq!(parse("typeset -x PATH=/usr/bin").prefix, "typeset -x PATH=");
+        assert_eq!(parse("export   PATH=/usr/bin").prefix, "export   PATH=");
+    }
+
+    #[test]
+    fn parse_path_line_keeps_the_indentation() {
+        let line = parse("  export PATH=/usr/bin");
+
+        assert_eq!(line.prefix, "  export PATH=");
+        assert_eq!(line.value, "/usr/bin");
+    }
+
+    #[test]
+    fn parse_path_line_drops_the_spaces_after_the_equal_sign() {
+        let line = parse("PATH=  /usr/bin:/opt/bin");
+
+        assert_eq!(line.prefix, "PATH=");
+        assert_eq!(line.value, "/usr/bin:/opt/bin");
+    }
+
+    #[test]
     fn parse_path_line_handles_double_quotes() {
-        let line = parse_path_line("export PATH=\"$HOME/bin:$PATH\"").expect("line is parsed");
+        let line = parse("export PATH=\"$HOME/bin:$PATH\"");
 
         assert_eq!(line.quote, Some('"'));
         assert_eq!(line.value, "$HOME/bin:$PATH");
@@ -325,8 +434,7 @@ mod tests {
 
     #[test]
     fn parse_path_line_handles_a_trailing_comment() {
-        let line =
-            parse_path_line("export PATH=/usr/bin:$PATH  # my tools").expect("line is parsed");
+        let line = parse("export PATH=/usr/bin:$PATH  # my tools");
 
         assert_eq!(line.value, "/usr/bin:$PATH");
         assert_eq!(line.trailing, "  # my tools");
@@ -334,18 +442,131 @@ mod tests {
 
     #[test]
     fn parse_path_line_keeps_a_hash_inside_the_path() {
-        let line = parse_path_line("PATH=/usr/bin#tag").expect("line is parsed");
+        let line = parse("PATH=/usr/bin#tag");
 
         assert_eq!(line.value, "/usr/bin#tag");
         assert_eq!(line.trailing, "");
     }
 
     #[test]
+    fn parse_path_line_detects_a_continuation() {
+        assert!(matches!(
+            parse_path_line("export PATH=/usr/bin:\\"),
+            Parsed::Continuation
+        ));
+        assert!(matches!(
+            parse_path_line("PATH=/usr/bin/\t\\"),
+            Parsed::Continuation
+        ));
+        assert!(matches!(
+            parse_path_line("export PATH=/usr/bin  # note \\"),
+            Parsed::Match(_)
+        ));
+        assert!(matches!(
+            parse_path_line("PATH=\"/usr/bin/\""),
+            Parsed::Match(_)
+        ));
+    }
+
+    #[test]
+    fn parse_path_line_detects_an_append() {
+        assert!(matches!(parse_path_line("PATH+=:/opt/bin"), Parsed::Append));
+        assert!(matches!(
+            parse_path_line("export PATH+=:/opt/bin"),
+            Parsed::Append
+        ));
+    }
+
+    #[test]
+    fn parse_path_line_ignores_other_lines() {
+        assert!(matches!(parse_path_line("export FOO=bar"), Parsed::Ignore));
+        assert!(matches!(parse_path_line("# PATH=/usr/bin"), Parsed::Ignore));
+        assert!(matches!(parse_path_line("export PATH"), Parsed::Ignore));
+    }
+
+    #[test]
     fn rewrite_restores_the_quotes_and_the_comment() {
-        let line = parse_path_line("export PATH=\"$HOME/bin\"  # mine").expect("line is parsed");
+        let line = parse("export PATH=\"$HOME/bin\"  # mine");
         let entries = vec!["/opt/bin".to_string()];
 
         assert_eq!(line.rewrite(&entries), "export PATH=\"/opt/bin\"  # mine");
+    }
+
+    #[test]
+    fn read_fails_on_several_lines_setting_path() {
+        let directory = temporary_directory();
+        let path = directory.join(".bashrc");
+        fs::write(&path, "PATH=/first\nPATH=/second\n").expect("file is written");
+
+        let error = ConfigFile::read(&path).err().expect("reading fails");
+
+        assert!(error.contains("lines 1, 2"), "unexpected error: {error}");
+
+        fs::remove_dir_all(&directory).expect("temporary directory is removed");
+    }
+
+    #[test]
+    fn read_fails_on_a_continuation_and_an_append() {
+        let directory = temporary_directory();
+        let path = directory.join(".bashrc");
+
+        fs::write(&path, "export PATH=/usr/bin:\\\n  /opt/bin\n").expect("file is written");
+        let error = ConfigFile::read(&path).err().expect("reading fails");
+        assert!(
+            error.contains("continues on the next line"),
+            "unexpected error: {error}"
+        );
+
+        fs::write(&path, "PATH+=:/opt/bin\n").expect("file is written");
+        let error = ConfigFile::read(&path).err().expect("reading fails");
+        assert!(error.contains("PATH+="), "unexpected error: {error}");
+
+        fs::remove_dir_all(&directory).expect("temporary directory is removed");
+    }
+
+    #[test]
+    fn read_fails_without_a_line_setting_path() {
+        let directory = temporary_directory();
+        let path = directory.join(".bashrc");
+        fs::write(&path, "export FOO=bar\n").expect("file is written");
+
+        let error = ConfigFile::read(&path).err().expect("reading fails");
+
+        assert!(error.contains("no line sets"), "unexpected error: {error}");
+
+        fs::remove_dir_all(&directory).expect("temporary directory is removed");
+    }
+
+    #[test]
+    fn rewrite_preserves_the_crlf_line_endings() {
+        let directory = temporary_directory();
+        let path = directory.join(".bashrc");
+        fs::write(&path, "export PATH=/usr/bin\r\nexport FOO=bar\r\n").expect("file is written");
+
+        let config = ConfigFile::read(&path).expect("file is read");
+        let contents = config.rewrite(&["/opt/bin".to_string()]);
+
+        assert_eq!(contents, "export PATH=/opt/bin\r\nexport FOO=bar\r\n");
+
+        fs::remove_dir_all(&directory).expect("temporary directory is removed");
+    }
+
+    #[test]
+    fn rewrite_keeps_the_indentation_of_the_line() {
+        let directory = temporary_directory();
+        let path = directory.join(".bashrc");
+        fs::write(&path, "if true; then\n  declare -x PATH=\"/usr/bin\"\nfi\n")
+            .expect("file is written");
+
+        let config = ConfigFile::read(&path).expect("file is read");
+        let contents = config.rewrite(&["/opt/bin".to_string()]);
+
+        assert_eq!(
+            contents,
+            "if true; then\n  declare -x PATH=\"/opt/bin\"\nfi\n"
+        );
+
+        fs::remove_dir_all(&directory).expect("temporary directory is removed");
     }
 
     #[test]
