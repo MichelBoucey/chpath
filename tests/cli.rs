@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::os::unix::fs::{PermissionsExt, symlink};
+use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -202,12 +202,10 @@ fn add_write_keeps_the_symbolic_link() {
     let output = sandbox.run(&["--add", text(&tools), "--write"]);
 
     assert_eq!(code(&output), 0);
-    assert!(
-        fs::symlink_metadata(sandbox.config())
-            .expect("metadata is read")
-            .file_type()
-            .is_symlink()
-    );
+    assert!(fs::symlink_metadata(sandbox.config())
+        .expect("metadata is read")
+        .file_type()
+        .is_symlink());
     assert_eq!(
         fs::read_to_string(&target).expect("target is read"),
         format!("export PATH=/usr/bin:{}\n", tools.display())
@@ -480,4 +478,113 @@ fn version_outputs_the_version() {
 
     assert_eq!(code(&output), 0);
     assert!(stdout(&output).contains("released under 3-Clause BSD License"));
+}
+
+#[test]
+fn export_add_emits_the_new_live_path() {
+    let sandbox = Sandbox::new("export PATH=/usr/bin\n");
+    let tools = sandbox.entry("tools");
+
+    let output = sandbox.run_with_path(
+        &["--add", text(&tools), "--write", "--export"],
+        "/usr/bin:/bin",
+    );
+
+    assert_eq!(code(&output), 0);
+    assert_eq!(
+        stdout(&output),
+        format!("export PATH='/usr/bin:/bin:{}'\n", tools.display())
+    );
+    assert!(stderr(&output).contains("has been added to PATH"));
+    assert_eq!(
+        sandbox.read(),
+        format!("export PATH=/usr/bin:{}\n", tools.display())
+    );
+}
+
+#[test]
+fn export_remove_emits_the_new_live_path() {
+    let sandbox = Sandbox::new("export PATH=/usr/bin:/opt/bin\n");
+
+    let output = sandbox.run_with_path(
+        &["--remove", "/opt/bin", "--write", "--export"],
+        "/usr/bin:/opt/bin:/bin",
+    );
+
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "export PATH='/usr/bin:/bin'\n");
+    assert_eq!(sandbox.read(), "export PATH=/usr/bin\n");
+}
+
+#[test]
+fn export_cleanup_emits_the_new_live_path() {
+    let dead = "/definitely/not/a/directory";
+    let sandbox = Sandbox::new(&format!("export PATH=/usr/bin:/usr/bin:{dead}:/bin\n"));
+
+    let output = sandbox.run_with_path(
+        &["--cleanup", "--write", "--export"],
+        "/usr/bin:/usr/bin:/bin:/bin",
+    );
+
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "export PATH='/usr/bin:/bin'\n");
+    assert!(stderr(&output).contains(dead));
+    assert!(stderr(&output).contains("duplicated"));
+    assert_eq!(sandbox.read(), "export PATH=/usr/bin:/bin\n");
+}
+
+#[test]
+fn export_quotes_the_special_characters_of_the_live_path() {
+    let sandbox = Sandbox::new("export PATH=/usr/bin\n");
+    let tools = sandbox.entry("tools");
+
+    let output = sandbox.run_with_path(
+        &["--add", text(&tools), "--write", "--export"],
+        "/opt/my tools:/opt/it's/bin",
+    );
+
+    assert_eq!(code(&output), 0);
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "export PATH='/opt/my tools:/opt/it'\\''s/bin:{}'\n",
+            tools.display()
+        )
+    );
+}
+
+#[test]
+fn export_requires_write() {
+    let sandbox = Sandbox::new("export PATH=/usr/bin\n");
+
+    let output = sandbox.run(&["--add", "/usr/bin", "--export"]);
+
+    assert_eq!(code(&output), 1);
+    assert!(stderr(&output).contains("--export must be combined with the flag --write"));
+}
+
+#[test]
+fn export_is_applied_by_eval_in_bash() {
+    let sandbox = Sandbox::new("export PATH=/usr/bin\n");
+    let tools = sandbox.entry("tools");
+
+    let output = sandbox.run_with_path(
+        &["--add", text(&tools), "--write", "--export"],
+        "/usr/bin:/bin",
+    );
+    let script = format!("eval {}\nprintf '%s' \"$PATH\"", stdout(&output));
+
+    let evaluated = Command::new("/bin/bash")
+        .arg("-c")
+        .arg(script)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .expect("bash runs");
+
+    assert_eq!(code(&evaluated), 0);
+    assert_eq!(
+        stdout(&evaluated),
+        format!("/usr/bin:/bin:{}", tools.display())
+    );
 }

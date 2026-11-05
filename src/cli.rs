@@ -41,6 +41,10 @@ pub struct Cli {
     #[arg(short = 'b', long)]
     pub backup: bool,
 
+    /// Output the shell command which can update PATH.
+    #[arg(long)]
+    pub export: bool,
+
     /// Output the version of chpath with the current git short hash.
     #[arg(short = 'v', long)]
     pub version: bool,

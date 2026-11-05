@@ -113,6 +113,20 @@ pub fn remove(entries: &[String], path: &str, home: &str) -> Result<Vec<String>,
         .collect())
 }
 
+/// Remove every occurrence of `path` from the given PATH entries.
+///
+/// Unlike `remove`, an absent path is not an error: this is used to apply the
+/// same operation to the live PATH, where the entry may already be missing.
+pub fn without(entries: &[String], path: &str, home: &str) -> Vec<String> {
+    let target = key(path, home);
+
+    entries
+        .iter()
+        .filter(|entry| key(entry, home) != target)
+        .cloned()
+        .collect()
+}
+
 /// Split the value of PATH on the colon separator.
 pub fn parse(value: &str) -> Vec<String> {
     if value.is_empty() {
@@ -539,6 +553,17 @@ mod tests {
             "unexpected message: {message}"
         );
         assert!(message.contains("/home/user/.bashrc"));
+    }
+
+    #[test]
+    fn without_drops_every_occurrence_and_tolerates_an_absent_path() {
+        let entries = parse("/usr/bin:/opt/bin:/usr/bin/");
+
+        assert_eq!(
+            without(&entries, "/opt/bin", "/home/user"),
+            vec!["/usr/bin", "/usr/bin/"]
+        );
+        assert_eq!(without(&entries, "/bin", "/home/user"), entries);
     }
 
     #[test]

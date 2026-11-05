@@ -28,6 +28,7 @@ license: BSD-3-Clause
 | `chpath --force` / `-f` | With `--add`, allow a directory that does not exist yet. |
 | `chpath --write` / `-w` | Rewrite the configuration file in place instead of printing it to stdout. |
 | `chpath --backup` / `-b` | With `--write`, save `<config>.bak` first. |
+| `chpath --export` | With `--write` and a modifying operation, print a quoted `export PATH=...` on stdout to apply the change to the current shell; informational output goes to stderr. |
 | `chpath --version` / `-v` | Print the version with the current git short hash. |
 
 The operations `--add`, `--remove`, `--check`, `--cleanup` and `--list` are mutually exclusive. Without any flag or argument, `chpath` prints its help.
@@ -36,10 +37,11 @@ The operations `--add`, `--remove`, `--check`, `--cleanup` and `--list` are mutu
 
 1. By default nothing is modified: `--add`, `--remove` and `--cleanup` print the whole rewritten configuration file to stdout. Preview and inspect it before persisting.
 2. To persist, add `--write`, optionally with `--backup`: `chpath --add ~/.go/bin --write --backup`.
-3. Audit first, then fix: run `chpath --check`, then `chpath --cleanup --write`. `--check` and `--cleanup` emit exactly the same lines, the dead paths first and then the duplicated paths; `--check` changes nothing and always exits `0`.
-4. Flag rules: `--write` cannot be combined with `--check` or `--list`, and must accompany `--add`, `--remove` or `--cleanup`. `--backup` requires `--write`. `--force` requires `--add`.
-5. Exit code is `0` on success and `1` on error; error messages go to stderr prefixed with `chpath:`. Confirmation messages (added, removed) also go to stderr.
-6. A refused operation (relative path, unsafe character, missing directory, ambiguous configuration file) never modifies the file, so retrying after fixing the input is safe.
+3. To apply the change to the current shell session as well, add `--export` and evaluate its stdout: `eval "$(chpath --add ~/.go/bin --write --export)"`. A child process cannot change its parent shell, so the `eval` is required.
+4. Audit first, then fix: run `chpath --check`, then `chpath --cleanup --write`. `--check` and `--cleanup` emit exactly the same lines, the dead paths first and then the duplicated paths; `--check` changes nothing and always exits `0`.
+5. Flag rules: `--write` cannot be combined with `--check` or `--list`, and must accompany `--add`, `--remove` or `--cleanup`. `--backup` requires `--write`. `--force` requires `--add`. `--export` requires `--write`.
+6. Exit code is `0` on success and `1` on error; error messages go to stderr prefixed with `chpath:`. Confirmation messages (added, removed) also go to stderr.
+7. A refused operation (relative path, unsafe character, missing directory, ambiguous configuration file) never modifies the file, so retrying after fixing the input is safe.
 
 ## Path normalization
 
@@ -63,6 +65,7 @@ $ chpath --add $HOME/.go/bin --write    # persist the change in ~/.bashrc
 $ chpath --add /opt/toolchain/bin --force   # the directory is created later
 $ chpath --cleanup --write --backup     # drop dead/duplicate entries, keep a .bak
 $ chpath --remove /usr/lib/jvm/default/bin --write
+$ eval "$(chpath --add $HOME/.go/bin --write --export)"  # persist and apply now
 ```
 
 To add a literal `$HOME` (kept unexpanded), quote it:

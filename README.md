@@ -13,6 +13,8 @@ Over time `PATH` tends to degrade: the same directory is added twice, and direct
 
 `chpath` rewrites the shell configuration file where `PATH` is set instead of patching the environment of the current process only, so the changes persist across new shell sessions.
 
+A program cannot modify the environment of the shell which launched it. To apply a change to the current shell session as well, `--export` prints the shell command which sets the new `PATH`, ready to be evaluated (see [`--export`](#419-export)).
+
 *N.B.*: for now, `chpath` is just implemented for **Bash**.
 
 ## 2. Security 
@@ -61,6 +63,7 @@ Options:
   -f, --force            Add a path whose directory does not exist
   -w, --write            Rewrite the shell configuration file instead of printing it to stdout
   -b, --backup           Write a backup of the shell configuration file before rewriting it
+      --export           Output the shell command which can update PATH
   -v, --version          Output the version of chpath with the current git short hash
   -h, --help             Print help
 ```
@@ -170,7 +173,7 @@ With `--write`, the configuration file is rewritten in place instead:
 $ chpath --add $HOME/.go/bin --write
 ```
 
-The flag `--write` cannot be combined with `--check` nor `--list`.
+The flag `--write` cannot be combined with `--check` nor `--list`. Combined with `--export`, it also outputs the shell command which updates the current shell session (see [`--export`](#419-export)).
 
 The rewrite is atomic: the new content is written to a temporary file in the same directory and renamed over the configuration file, so an interrupted write never leaves a truncated file. The permissions of the file are preserved and a brand new file is created with the mode `600`.
 
@@ -184,7 +187,22 @@ $ chpath --add $HOME/.go/bin --write --backup
 
 The flag `--backup` cannot be used without `--write`.
 
-#### 4.1.9. `--version`, `-v`
+#### 4.1.9. `--export`
+
+In combination with `--write`, `--add`, `--remove` or `--cleanup`, output the shell command which sets the new `PATH` in the current shell session:
+
+```console
+$ eval "$(chpath --add $HOME/.go/bin --write --export)"
+the path '/home/user/.go/bin' has been added to PATH
+$ echo "$PATH"
+/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:/home/user/.local/bin:/home/user/.go/bin
+```
+
+The configuration file is rewritten as usual, and `stdout` holds a single `export PATH='...'` line, safely quoted, which `eval` executes in the current shell. Its value is the live `PATH` with the requested operation applied, so the entries already set by the configuration file are not duplicated. The confirmation messages and, with `--cleanup`, the issues are written to `stderr`, so `stdout` can be passed directly to `eval`.
+
+The flag `--export` cannot be used without `--write`, and therefore not with `--check` nor `--list`.
+
+#### 4.1.10. `--version`, `-v`
 
 Output the version of `chpath` with the current git short hash:
 
@@ -194,7 +212,7 @@ chpath 1.0.0 (f244051) released under 3-Clause BSD License
 Copyright © 2026 Michel Boucey (michel.boucey@gmail.com)
 ```
 
-#### 4.1.10. `--help`, `-h`
+#### 4.1.11. `--help`, `-h`
 
 Output the help of `chpath`.
 

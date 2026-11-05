@@ -1,5 +1,6 @@
 mod cli;
 mod config_file;
+mod export;
 mod pathlist;
 mod shell;
 
@@ -64,7 +65,13 @@ fn run() -> Result<(), String> {
     }
 
     if cli.write {
-        config_file::write(&config_path, &contents, cli.backup)
+        config_file::write(&config_path, &contents, cli.backup)?;
+
+        if cli.export {
+            return export::print(&live_path(&cli, &home));
+        }
+
+        Ok(())
     } else {
         config_file::print(&contents)
     }
@@ -97,6 +104,10 @@ fn check_flags(cli: &Cli) -> Result<(), String> {
         return Err("the flag --backup must be combined with the flag --write".to_string());
     }
 
+    if cli.export && !cli.write {
+        return Err("the flag --export must be combined with the flag --write".to_string());
+    }
+
     if !operation {
         return Err("no operation given, run 'chpath --help'".to_string());
     }
@@ -118,7 +129,7 @@ fn list(entries: &[String], home: &str) -> Result<(), String> {
 
 /// Output the issues detected in PATH, exactly the same lines as `--cleanup`.
 fn check(entries: &[String], home: &str) -> Result<(), String> {
-    print_issues(&pathlist::issues(entries, home));
+    print_issues(&pathlist::issues(entries, home), false);
 
     Ok(())
 }
@@ -126,15 +137,26 @@ fn check(entries: &[String], home: &str) -> Result<(), String> {
 /// Output the issues detected in PATH, one per line, or `PATH is OK` when
 /// nothing is found. Both `--check` and `--cleanup` use this function so that
 /// they output exactly the same lines.
-fn print_issues(issues: &[pathlist::Issue]) {
+///
+/// When the issues are written to stderr, stdout is left free for the shell
+/// command emitted by `--export`.
+fn print_issues(issues: &[pathlist::Issue], to_stderr: bool) {
     if issues.is_empty() {
-        println!("PATH is OK");
+        print_line("PATH is OK", to_stderr);
 
         return;
     }
 
     for issue in issues {
-        println!("{}", issue.describe());
+        print_line(&issue.describe(), to_stderr);
+    }
+}
+
+fn print_line(line: &str, to_stderr: bool) {
+    if to_stderr {
+        eprintln!("{line}");
+    } else {
+        println!("{line}");
     }
 }
 
@@ -176,12 +198,34 @@ fn apply(
 
     if cli.cleanup {
         let cleanup = pathlist::cleanup(entries, home);
-        print_issues(&cleanup.issues());
+        print_issues(&cleanup.issues(), cli.export);
 
         return Ok((cleanup.kept, Vec::new()));
     }
 
     Err("no operation given, run 'chpath --help'".to_string())
+}
+
+/// The live PATH entries after applying the same operation as the one applied
+/// to the configuration file, used by `--export` to update the current shell
+/// session.
+fn live_path(cli: &Cli, home: &str) -> Vec<String> {
+    let live = env::var("PATH").unwrap_or_default();
+    let entries = pathlist::parse(&live);
+
+    if let Some(path) = &cli.add {
+        return pathlist::add(&entries, path, home).0;
+    }
+
+    if let Some(path) = &cli.remove {
+        return pathlist::without(&entries, path, home);
+    }
+
+    if cli.cleanup {
+        return pathlist::cleanup(&entries, home).kept;
+    }
+
+    entries
 }
 
 fn print_help() -> ExitCode {
